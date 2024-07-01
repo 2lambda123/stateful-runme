@@ -71,16 +71,10 @@ func (ir *IdentityResolver) DocumentEnabled() bool {
 	return ir.documentIdentity
 }
 
-// EphemeralDocumentID returns a new document ID which is not persisted.
-func (ir *IdentityResolver) EphemeralDocumentID() string {
-	return ulid.GenerateID()
-}
-
 // GetCellID returns a cell ID and a boolean indicating if it's new or from attributes.
 func (ir *IdentityResolver) GetCellID(obj any, attributes map[string]string) (string, bool) {
-	if !ir.cellIdentity {
-		return "", false
-	}
+	// we used to early return here when !ir.cellIdentity, but we
+	// need cell IDs for the ephemeral case too, ie 'runme.dev/id'
 
 	// todo(sebastian): are invalid ulid's valid IDs?
 	// Check for a valid 'id' in attributes;

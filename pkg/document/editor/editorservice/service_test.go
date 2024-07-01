@@ -93,6 +93,7 @@ func Test_IdentityUnspecified(t *testing.T) {
 
 		dResp, err := deserialize(client, tt.content, identity)
 		assert.NoError(t, err)
+		assert.Contains(t, dResp.Notebook.Metadata, "runme.dev/id")
 
 		rawFrontmatter, ok := dResp.Notebook.Metadata["runme.dev/frontmatter"]
 		if tt.hasExtraFrontmatter {
@@ -139,7 +140,7 @@ func Test_IdentityAll(t *testing.T) {
 		rawFrontmatter, ok := dResp.Notebook.Metadata["runme.dev/frontmatter"]
 		assert.True(t, ok)
 
-		assert.Len(t, dResp.Notebook.Metadata, 2)
+		assert.Len(t, dResp.Notebook.Metadata, 3)
 
 		if tt.hasExtraFrontmatter {
 			assert.Contains(t, rawFrontmatter, "prop: value")
@@ -180,7 +181,7 @@ func Test_IdentityDocument(t *testing.T) {
 		rawFrontmatter, ok := dResp.Notebook.Metadata["runme.dev/frontmatter"]
 		assert.True(t, ok)
 
-		assert.Len(t, dResp.Notebook.Metadata, 2)
+		assert.Len(t, dResp.Notebook.Metadata, 3)
 
 		if tt.hasExtraFrontmatter {
 			assert.Contains(t, rawFrontmatter, "prop: value")
@@ -217,6 +218,7 @@ func Test_IdentityCell(t *testing.T) {
 	for _, tt := range tests {
 		dResp, err := deserialize(client, tt.content, identity)
 		assert.NoError(t, err)
+		assert.Contains(t, dResp.Notebook.Metadata, "runme.dev/id")
 
 		rawFrontmatter, ok := dResp.Notebook.Metadata["runme.dev/frontmatter"]
 
@@ -268,7 +270,7 @@ func Test_RunmelessFrontmatter(t *testing.T) {
 	rawFrontmatter, ok := dResp.Notebook.Metadata["runme.dev/frontmatter"]
 
 	assert.True(t, ok)
-	assert.Len(t, dResp.Notebook.Metadata, 3)
+	assert.Len(t, dResp.Notebook.Metadata, 2)
 	assert.Contains(t, rawFrontmatter, "prop: value\n")
 	assert.NotContains(t, rawFrontmatter, "id: \"123\"\n")
 	assert.NotRegexp(t, versionRegex, rawFrontmatter, "Wrong version")
@@ -288,6 +290,63 @@ func Test_RunmelessFrontmatter(t *testing.T) {
 	assert.Contains(t, content, "```sh {\"id\":\""+testMockID+"\",\"name\":\"foo\"}\n")
 	assert.Contains(t, content, "```sh {\"id\":\""+testMockID+"\",\"name\":\"bar\"}\n")
 	assert.Contains(t, content, "```js {\"id\":\""+testMockID+"\"}\n")
+}
+
+func Test_NewFile_EmptyDocument_WithIdentityAll(t *testing.T) {
+	doc := ""
+
+	identity := parserv1.RunmeIdentity_RUNME_IDENTITY_ALL
+
+	dResp, err := deserialize(client, doc, identity)
+	assert.NoError(t, err)
+
+	rawFrontmatter, ok := dResp.Notebook.Metadata["runme.dev/frontmatter"]
+	assert.True(t, ok)
+	assert.Len(t, dResp.Notebook.Metadata, 3)
+	assert.Regexp(t, versionRegex, rawFrontmatter, "Wrong version")
+
+	assert.NotNil(t, dResp.Notebook.Frontmatter)
+	prasedRunmeID := dResp.Notebook.Frontmatter.Runme.Id
+	assert.Contains(t, rawFrontmatter, "id: "+prasedRunmeID+"\n")
+
+	sResp, err := serializeWithIdentityPersistence(client, dResp.Notebook, identity)
+	assert.NoError(t, err)
+
+	content := string(sResp.Result)
+
+	assert.Contains(t, content, "runme:\n")
+	assert.Contains(t, content, "id: "+prasedRunmeID+"\n")
+	assert.Contains(t, content, "version: v")
+	assert.Regexp(t, "^---\n", content)
+}
+
+func Test_EphemeralIdentity(t *testing.T) {
+	doc := strings.Join([]string{
+		"# Test identity integration with extension",
+		"```sh\ngh auth --help\n```",
+	}, "\n")
+
+	identity := parserv1.RunmeIdentity_RUNME_IDENTITY_UNSPECIFIED
+
+	dResp, err := deserialize(client, doc, identity)
+	assert.NoError(t, err)
+
+	assert.Len(t, dResp.Notebook.Metadata, 2)
+	assert.Len(t, dResp.Notebook.Cells, 2)
+	assert.NotContains(t, dResp.Notebook.Cells[1].Metadata, "id")
+	assert.Contains(t, dResp.Notebook.Cells[1].Metadata, "runme.dev/id")
+
+	sResp, err := serializeWithIdentityPersistence(client, dResp.Notebook, identity)
+	assert.NoError(t, err)
+
+	content := string(sResp.Result)
+
+	assert.NotContains(t, content, "{\"id\":\"")
+	assert.NotContains(t, dResp.Notebook.Metadata, "id")
+	assert.NotContains(t, content, "runme:\n")
+	assert.NotContains(t, content, "id: ")
+	assert.NotContains(t, content, "version: v")
+	assert.NotRegexp(t, "^---\n", content)
 }
 
 func Test_parserServiceServer_Ast(t *testing.T) {
@@ -409,7 +468,9 @@ func deserialize(client parserv1.ParserServiceClient, content string, idt parser
 }
 
 func serializeWithIdentityPersistence(client parserv1.ParserServiceClient, notebook *parserv1.Notebook, idt parserv1.RunmeIdentity) (*parserv1.SerializeResponse, error) {
-	persistIdentityLikeExtension(notebook)
+	if idt == parserv1.RunmeIdentity_RUNME_IDENTITY_ALL || idt == parserv1.RunmeIdentity_RUNME_IDENTITY_CELL {
+		persistIdentityLikeExtension(notebook)
+	}
 	return client.Serialize(
 		context.Background(),
 		&parserv1.SerializeRequest{

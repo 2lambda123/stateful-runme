@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	stderrors "errors"
+	"io"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/pkg/errors"
@@ -88,16 +89,30 @@ func newFrontmatter() *Frontmatter {
 	}
 }
 
-// Marshal returns a marshaled frontmatter including triple-dashed lines.
-// If the identity is required, but Frontmatter is nil, a new one is created.
-func (f *Frontmatter) Marshal(requireIdentity bool) ([]byte, error) {
+// Marshal returns a marshaled frontmatter including triple-dashed lines and a document ID.
+// If the identity is required, but Frontmatter is nil, a new one including ID is created.
+func (f *Frontmatter) Marshal(requireIdentity bool, docID io.StringWriter) ([]byte, error) {
 	if f == nil {
 		if !requireIdentity {
-			return nil, nil
+			// Return a new document ID for ephemeral usage.
+			_, err := docID.WriteString(ulid.GenerateID())
+			return nil, err
 		}
 		f = newFrontmatter()
 	}
-	return f.marshal(requireIdentity)
+
+	b, err := f.marshal(requireIdentity)
+	if err != nil {
+		return nil, err
+	}
+
+	if docID != nil && !f.Runme.IsEmpty() {
+		if _, err := docID.WriteString(f.Runme.ID); err != nil {
+			return nil, err
+		}
+	}
+
+	return b, nil
 }
 
 func (f *Frontmatter) marshal(requireIdentity bool) ([]byte, error) {

@@ -22,7 +22,7 @@ func (b *configBuilder) Build() (*ProgramConfig, error) {
 		ProgramName: b.programPath(),
 		LanguageId:  b.block.Language(),
 		Directory:   b.dir(),
-		Interactive: b.block.Interactive(),
+		Interactive: b.block.InteractiveLegacy(),
 	}
 
 	if isShell(cfg) {

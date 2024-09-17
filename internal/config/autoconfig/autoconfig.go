@@ -17,10 +17,15 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/dig"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/stateful/runme/v3/internal/command"
 	"github.com/stateful/runme/v3/internal/config"
 	"github.com/stateful/runme/v3/internal/dockerexec"
+	"github.com/stateful/runme/v3/internal/runnerv2client"
+	runmetls "github.com/stateful/runme/v3/internal/tls"
 	"github.com/stateful/runme/v3/pkg/project"
 )
 
@@ -63,6 +68,7 @@ func init() {
 	mustProvide(container.Provide(getCommandFactory))
 	mustProvide(container.Provide(getConfigLoader))
 	mustProvide(container.Provide(getDocker))
+	mustProvide(container.Provide(getLocalClient))
 	mustProvide(container.Provide(getLogger))
 	mustProvide(container.Provide(getProject))
 	mustProvide(container.Provide(getProjectFilters))
@@ -95,6 +101,33 @@ func getDocker(c *config.Config, logger *zap.Logger) (*dockerexec.Docker, error)
 		Image:        c.RuntimeDockerImage,
 		Logger:       logger,
 	})
+}
+
+type LocalClient = runnerv2client.Client
+
+func getLocalClient(cfg *config.Config, logger *zap.Logger) (*LocalClient, error) {
+	if cfg.ServerAddress == "" {
+		return nil, nil
+	}
+
+	var opts []grpc.DialOption
+
+	if cfg.ServerTLSEnabled {
+		tlsConfig, err := runmetls.LoadClientConfig(cfg.ServerTLSCertFile, cfg.ServerTLSKeyFile)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		creds := credentials.NewTLS(tlsConfig)
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	return runnerv2client.New(
+		cfg.ServerAddress,
+		logger,
+		opts...,
+	)
 }
 
 func getLogger(c *config.Config) (*zap.Logger, error) {

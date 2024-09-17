@@ -59,8 +59,8 @@ server:
   tls:
     enabled: true
     # If not specified, default paths will be used.
-    # cert_file: "/path/to/cert.pem"
-    # key_file: "/path/to/key.pem"
+    cert_file: "/tmp/runme/cert.pem"
+    key_file: "/tmp/runme/key.pem"
 
 log:
   enabled: true

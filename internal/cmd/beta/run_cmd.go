@@ -19,7 +19,7 @@ import (
 )
 
 func runCmd(*commonFlags) *cobra.Command {
-	var serverAddress string
+	var remote bool
 
 	cmd := cobra.Command{
 		Use:     "run [command1 command2 ...]",
@@ -40,7 +40,7 @@ Run all blocks from the "setup" and "teardown" tags:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return autoconfig.InvokeForCommand(
 				func(
-					client *autoconfig.LocalClient,
+					clientFactory autoconfig.ClientFactory,
 					cmdFactory command.Factory,
 					filters []project.Filter,
 					logger *zap.Logger,
@@ -74,9 +74,10 @@ Run all blocks from the "setup" and "teardown" tags:
 
 					ctx := cmd.Context()
 
-					if serverAddress != "" && client != nil {
-						if serverAddress != "local" {
-							return errors.New("only local server is supported")
+					if remote {
+						client, err := clientFactory()
+						if err != nil {
+							return err
 						}
 
 						sessionResp, err := client.CreateSession(
@@ -122,7 +123,7 @@ Run all blocks from the "setup" and "teardown" tags:
 		},
 	}
 
-	cmd.Flags().StringVarP(&serverAddress, "server", "s", "", "Server address to connect to. Use 'local' for local server.")
+	cmd.Flags().BoolVarP(&remote, "remote", "r", false, "Run commands on a remote server.")
 
 	return &cmd
 }
@@ -183,7 +184,7 @@ func runCodeBlockWithClient(
 	block *document.CodeBlock,
 	sessionID string,
 ) error {
-	cfg, err := createProgramConfigFromCodeBlock(block, command.WithLegacyInteractive())
+	cfg, err := createProgramConfigFromCodeBlock(block, command.WithInteractiveLegacy())
 	if err != nil {
 		return err
 	}

@@ -65,15 +65,50 @@ func mustProvide(err error) {
 }
 
 func init() {
+	mustProvide(container.Provide(getClient))
+	mustProvide(container.Provide(getClientFactory))
 	mustProvide(container.Provide(getCommandFactory))
 	mustProvide(container.Provide(getConfigLoader))
 	mustProvide(container.Provide(getDocker))
-	mustProvide(container.Provide(getLocalClient))
 	mustProvide(container.Provide(getLogger))
 	mustProvide(container.Provide(getProject))
 	mustProvide(container.Provide(getProjectFilters))
 	mustProvide(container.Provide(getRootConfig))
 	mustProvide(container.Provide(getUserConfigDir))
+}
+
+func getClient(cfg *config.Config, logger *zap.Logger) (*runnerv2client.Client, error) {
+	if cfg.Server == nil {
+		return nil, nil
+	}
+
+	var opts []grpc.DialOption
+
+	if cfg.Server.Tls != nil && cfg.Server.Tls.Enabled {
+		// It's ok to dereference TLS fields because they are checked in [getRootConfig].
+		tlsConfig, err := runmetls.LoadClientConfig(*cfg.Server.Tls.CertFile, *cfg.Server.Tls.KeyFile)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		creds := credentials.NewTLS(tlsConfig)
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+	} else {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	return runnerv2client.New(
+		cfg.Server.Address,
+		logger,
+		opts...,
+	)
+}
+
+type ClientFactory func() (*runnerv2client.Client, error)
+
+func getClientFactory(cfg *config.Config, logger *zap.Logger) ClientFactory {
+	return func() (*runnerv2client.Client, error) {
+		return getClient(cfg, logger)
+	}
 }
 
 func getCommandFactory(docker *dockerexec.Docker, logger *zap.Logger, proj *project.Project) command.Factory {
@@ -87,51 +122,33 @@ func getCommandFactory(docker *dockerexec.Docker, logger *zap.Logger, proj *proj
 func getConfigLoader() (*config.Loader, error) {
 	// TODO(adamb): change from "./experimental" to "." when the feature is stable and
 	// delete the project root path.
-	return config.NewLoader("runme", "yaml", os.DirFS("./experimental"), config.WithProjectRootPath(os.DirFS("."))), nil
+	return config.NewLoader(
+		[]string{"runme.yaml", "runme." + os.Getenv("USER") + ".yaml"},
+		os.DirFS("./experimental"),
+		config.WithProjectRootPath(os.DirFS(".")),
+	), nil
 }
 
 func getDocker(c *config.Config, logger *zap.Logger) (*dockerexec.Docker, error) {
-	if !c.RuntimeDockerEnabled {
+	if c.Runtime == nil || c.Runtime.Docker == nil || !c.Runtime.Docker.Enabled {
 		return nil, nil
 	}
 
-	return dockerexec.New(&dockerexec.Options{
-		BuildContext: c.RuntimeDockerBuildContext,
-		Dockerfile:   c.RuntimeDockerBuildDockerfile,
-		Image:        c.RuntimeDockerImage,
-		Logger:       logger,
-	})
-}
-
-type LocalClient = runnerv2client.Client
-
-func getLocalClient(cfg *config.Config, logger *zap.Logger) (*LocalClient, error) {
-	if cfg.ServerAddress == "" {
-		return nil, nil
+	options := &dockerexec.Options{
+		Image:  c.Runtime.Docker.Image,
+		Logger: logger,
 	}
 
-	var opts []grpc.DialOption
-
-	if cfg.ServerTLSEnabled {
-		tlsConfig, err := runmetls.LoadClientConfig(cfg.ServerTLSCertFile, cfg.ServerTLSKeyFile)
-		if err != nil {
-			return nil, errors.WithStack(err)
-		}
-		creds := credentials.NewTLS(tlsConfig)
-		opts = append(opts, grpc.WithTransportCredentials(creds))
-	} else {
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if b := c.Runtime.Docker.Build; b != nil {
+		options.BuildContext = c.Runtime.Docker.Build.Context
+		options.Dockerfile = c.Runtime.Docker.Build.Dockerfile
 	}
 
-	return runnerv2client.New(
-		cfg.ServerAddress,
-		logger,
-		opts...,
-	)
+	return dockerexec.New(options)
 }
 
 func getLogger(c *config.Config) (*zap.Logger, error) {
-	if c == nil || !c.LogEnabled {
+	if c == nil || c.Log == nil || !c.Log.Enabled {
 		return zap.NewNop(), nil
 	}
 
@@ -148,16 +165,16 @@ func getLogger(c *config.Config) (*zap.Logger, error) {
 		ErrorOutputPaths: []string{"stderr"},
 	}
 
-	if c.LogVerbose {
+	if c.Log.Verbose {
 		zapConfig.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
 		zapConfig.Development = true
 		zapConfig.Encoding = "console"
 		zapConfig.EncoderConfig = zap.NewDevelopmentEncoderConfig()
 	}
 
-	if c.LogPath != "" {
-		zapConfig.OutputPaths = []string{c.LogPath}
-		zapConfig.ErrorOutputPaths = []string{c.LogPath}
+	if c.Log.Path != "" {
+		zapConfig.OutputPaths = []string{c.Log.Path}
+		zapConfig.ErrorOutputPaths = []string{c.Log.Path}
 	}
 
 	l, err := zapConfig.Build()
@@ -169,11 +186,11 @@ func getProject(c *config.Config, logger *zap.Logger) (*project.Project, error) 
 		project.WithLogger(logger),
 	}
 
-	if c.ProjectFilename != "" {
-		return project.NewFileProject(c.ProjectFilename, opts...)
+	if c.Project.Filename != "" {
+		return project.NewFileProject(c.Project.Filename, opts...)
 	}
 
-	projDir := c.ProjectRoot
+	projDir := c.Project.Root
 	// If no project directory is specified, use the current directory.
 	if projDir == "" {
 		projDir = "."
@@ -181,12 +198,12 @@ func getProject(c *config.Config, logger *zap.Logger) (*project.Project, error) 
 
 	opts = append(
 		opts,
-		project.WithIgnoreFilePatterns(c.ProjectIgnorePaths...),
-		project.WithRespectGitignore(!c.ProjectDisableGitignore),
-		project.WithEnvFilesReadOrder(c.ProjectEnvSources),
+		project.WithIgnoreFilePatterns(c.Project.Ignore...),
+		project.WithRespectGitignore(!c.Project.DisableGitignore),
+		project.WithEnvFilesReadOrder(c.Project.Env.Sources),
 	)
 
-	if c.ProjectFindRepoUpward {
+	if c.Project.FindRepoUpward {
 		opts = append(opts, project.WithFindRepoUpward())
 	}
 
@@ -196,8 +213,12 @@ func getProject(c *config.Config, logger *zap.Logger) (*project.Project, error) 
 func getProjectFilters(c *config.Config) ([]project.Filter, error) {
 	var filters []project.Filter
 
-	for _, filter := range c.ProjectFilters {
-		filter := filter
+	for _, filter := range c.Project.Filters {
+		filter := config.Filter{
+			Type:      string(filter.Type),
+			Condition: filter.Condition,
+			Extra:     filter.Extra,
+		}
 
 		switch filter.Type {
 		case config.FilterTypeBlock:
@@ -245,24 +266,28 @@ func getProjectFilters(c *config.Config) ([]project.Filter, error) {
 func getRootConfig(cfgLoader *config.Loader, userCfgDir UserConfigDir) (*config.Config, error) {
 	var cfg *config.Config
 
-	content, err := cfgLoader.RootConfig()
+	items, err := cfgLoader.RootConfigs()
 	switch err {
 	case nil:
-		if cfg, err = config.ParseYAML(content); err != nil {
+		if cfg, err = config.ParseYAML(items...); err != nil {
 			return nil, err
 		}
 	case config.ErrRootConfigNotFound:
-		cfg = config.Defaults()
+		cfg = config.Default()
 	default:
 		return nil, errors.WithMessage(err, "failed to load root configuration")
 	}
 
-	if cfg.ServerTLSEnabled {
-		if cfg.ServerTLSCertFile == "" {
-			cfg.ServerTLSCertFile = filepath.Join(string(userCfgDir), "runme", "tls", "cert.pem")
+	if cfg.Server != nil && cfg.Server.Tls != nil && cfg.Server.Tls.Enabled {
+		tls := cfg.Server.Tls
+
+		if tls.CertFile == nil {
+			path := filepath.Join(string(userCfgDir), "runme", "tls", "cert.pem")
+			tls.CertFile = &path
 		}
-		if cfg.ServerTLSKeyFile == "" {
-			cfg.ServerTLSKeyFile = filepath.Join(string(userCfgDir), "runme", "tls", "key.pem")
+		if tls.KeyFile == nil {
+			path := filepath.Join(string(userCfgDir), "runme", "tls", "key.pem")
+			tls.KeyFile = &path
 		}
 	}
 

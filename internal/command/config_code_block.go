@@ -11,9 +11,9 @@ import (
 
 type ConfigBuilderOption func(*configBuilder) error
 
-func WithLegacyInteractive() ConfigBuilderOption {
+func WithInteractiveLegacy() ConfigBuilderOption {
 	return func(b *configBuilder) error {
-		b.useLegacyInteractive = true
+		b.useInteractiveLegacy = true
 		return nil
 	}
 }
@@ -32,7 +32,7 @@ func NewProgramConfigFromCodeBlock(block *document.CodeBlock, opts ...ConfigBuil
 
 type configBuilder struct {
 	block                *document.CodeBlock
-	useLegacyInteractive bool
+	useInteractiveLegacy bool
 }
 
 func (b *configBuilder) Build() (*ProgramConfig, error) {
@@ -42,7 +42,7 @@ func (b *configBuilder) Build() (*ProgramConfig, error) {
 		Directory:   b.dir(),
 	}
 
-	if b.useLegacyInteractive {
+	if b.useInteractiveLegacy {
 		cfg.Interactive = b.block.InteractiveLegacy()
 	} else {
 		cfg.Interactive = b.block.Interactive()

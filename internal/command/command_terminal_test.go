@@ -49,12 +49,12 @@ func TestTerminalCommand_EnvPropagation(t *testing.T) {
 
 	// Terminal command sets up a trap on EXIT.
 	// Wait for it before starting to send commands.
-	expectContainLine(t, stdout, "trap -- \"__cleanup\" EXIT")
+	expectContainLine(t, ctx, stdout, "trap -- \"__cleanup\" EXIT")
 
 	_, err = stdinW.Write([]byte("export TEST_ENV=1\n"))
 	require.NoError(t, err)
 	// Wait for the prompt before sending the next command.
-	expectContainLine(t, stdout, "$")
+	expectContainLine(t, ctx, stdout, "$")
 	_, err = stdinW.Write([]byte("exit\n"))
 	require.NoError(t, err)
 
@@ -91,15 +91,15 @@ func TestTerminalCommand_Intro(t *testing.T) {
 
 	require.NoError(t, cmd.Start(ctx))
 
-	expectContainLine(t, stdout, "eval $(runme beta env source --silent --insecure --export)")
-	// todo(sebastian): why won't this work on docker? winsize?
-	// expectContainLine(t, stdout, strings.Trim(string(introMsg), " \r\n"))
+	expectContainLine(t, ctx, stdout, "eval $(runme beta env source --silent --insecure --export)")
 }
 
-func expectContainLine(t *testing.T, r io.Reader, expected string) {
+func expectContainLine(t *testing.T, ctx context.Context, r io.Reader, expected string) {
 	t.Helper()
 
 	for {
+		buf := new(bytes.Buffer)
+		r := io.TeeReader(r, buf)
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -108,7 +108,12 @@ func expectContainLine(t *testing.T, r io.Reader, expected string) {
 			}
 		}
 		require.NoError(t, scanner.Err())
-		time.Sleep(time.Millisecond * 400)
+
+		select {
+		case <-time.After(100 * time.Millisecond):
+		case <-ctx.Done():
+			t.Fatalf("error waiting for line %q, instead read %q: %s", expected, buf.Bytes(), ctx.Err())
+		}
 	}
 }
 

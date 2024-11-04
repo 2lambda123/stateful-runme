@@ -18,12 +18,12 @@ repos:
       - id: trailing-whitespace
         stages: [pre-commit]
   - repo: https://github.com/crate-ci/committed
-    rev: v1.0.20
+    rev: v1.1.1
     hooks:
       - id: committed
         stages: [commit-msg]
   - repo: https://github.com/crate-ci/typos
-    rev: v1.26.8
+    rev: v1.27.0
     hooks:
       - id: typos
         args: ["--diff", "--force-exclude"]
